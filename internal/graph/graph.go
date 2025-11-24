@@ -21,8 +21,8 @@ func NewGraph() *Graph {
 
 func (g *Graph) AddEdge(from NodeID, to NodeID, weight float64) {
 	g.Adj[from] = append(g.Adj[from], Edge{To: to, Weight: weight})
+
+	if _, exists := g.Adj[to]; !exists {
+		g.Adj[to] = []Edge{}
+	}
 }
-
-type Distance map[NodeID]float64
-
-type Previous map[NodeID]NodeID

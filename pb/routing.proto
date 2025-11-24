@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package routing.v1;
+
+option go_package = "github.com/tnh-lab/routing-engine-worker/pb;pb";
+
+service RoutingService {
+  rpc ShortestPath (ShortestPathRequest) returns (ShortestPathResponse);
+}
+
+message ShortestPathRequest {
+  int64 source = 1;
+  int64 target = 2;
+}
+
+message PathNode {
+  int64 node_id = 1;
+  double dist = 2;
+}
+
+message ShortestPathResponse {
+  repeated PathNode path = 1;
+  double total_distance = 2;
+}
