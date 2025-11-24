@@ -3,60 +3,90 @@ package main
 import (
 	"context"
 	"log"
+	"math"
 	"net"
+	"os"
+
 	"google.golang.org/grpc"
 	"github.com/tnh-lab/routing-engine-worker/internal/dijkstra"
 	"github.com/tnh-lab/routing-engine-worker/internal/graph"
-	"github.com/tnh-lab/routing-engine-worker/pb"
+	pb "github.com/tnh-lab/routing-engine-worker/pb"
 )
 
 type server struct {
 	pb.UnimplementedRoutingServiceServer
-	g *graph.Graph
+	g *graph.CSRGraph
+}
+
+func NewServer(g *graph.CSRGraph) *server {
+	return &server{g: g}
 }
 
 func (s *server) ShortestPath(ctx context.Context, req *pb.ShortestPathRequest) (*pb.ShortestPathResponse, error) {
-	dist, prev := dijkstra.Dijsktra(s.g, graph.NodeID(req.Source))
+	source := uint32(req.GetSource())
+	target := uint32(req.GetTarget())
 
-	path := []int64{}
-	current := req.Target
+	// Run Dijkstra on CSR
+	dist, prev := dijkstra.CSR(s.g, source)
 
-	for current != -1 {
-		path = append([]int64{current}, path...)
-		current = int64(prev[graph.NodeID(current)])
+	// unreachable?
+	if dist[target] == float32(math.Inf(1)) {
+		return &pb.ShortestPathResponse{
+			Path:          nil,
+			TotalDistance: 0,
+		}, nil
+	}
+
+	// reconstruct path (target → source, reversed)
+	pathNodes := []uint32{}
+	cur := target
+	noPrev := uint32(0xFFFFFFFF)
+
+	for cur != noPrev {
+		pathNodes = append([]uint32{cur}, pathNodes...)
+		if cur == source {
+			break
+		}
+		cur = prev[cur]
 	}
 
 	resp := &pb.ShortestPathResponse{
-		TotalDistance: dist[graph.NodeID(req.Target)],
+		TotalDistance: float64(dist[target]),
 	}
 
-	for _, node := range path {
+	// convert to protobuf format
+	for _, n := range pathNodes {
 		resp.Path = append(resp.Path, &pb.PathNode{
-			NodeId: node,
-			Dist: dist[graph.NodeID(node)],
+			NodeId: int64(n),
+			Dist:   float64(dist[n]),
 		})
 	}
 
 	return resp, nil
-
 }
 
 func main() {
-    // Load or build your graph
-    g, err := graph.LoadGraphFromCSV("data/edges.csv")
+	csrPath := os.Getenv("GRAPH_CSR")
+	if csrPath == "" {
+		csrPath = "data/roadNet-CA.csr"
+	}
+
+	// Load CSR graph
+	g, err := graph.LoadCSR(csrPath)
 	if err != nil {
-        log.Fatalf("Failed to load graph: %v", err)
-    }
-    lis, err := net.Listen("tcp", ":50051")
-    if err != nil {
-        log.Fatal(err)
-    }
+		log.Fatalf("failed to load CSR graph: %v", err)
+	}
 
-    s := grpc.NewServer()
-    pb.RegisterRoutingServiceServer(s, &server{g: g})
+	lis, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
 
-    log.Println("Routing gRPC server listening on port 50051...")
-    if err := s.Serve(lis); err != nil {
-        log.Fatal(err)
-    }
+	grpcServer := grpc.NewServer()
+	pb.RegisterRoutingServiceServer(grpcServer, NewServer(g))
+
+	log.Println("RoutingService gRPC server listening on :50051")
+	if err := grpcServer.Serve(lis); err != nil {
+		log.Fatalf("failed to serve: %v", err)
+	}
 }
